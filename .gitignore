@@ -1,0 +1,14 @@
+# ═══ DUA-RESTRICTED — NEVER COMMIT ═══
+replay_cohort.json
+*.pt
+*.pkl
+*.csv
+*.parquet
+*.gz
+
+# runtime
+vigil_events.db
+__pycache__/
+*.pyc
+.env
+.venv/

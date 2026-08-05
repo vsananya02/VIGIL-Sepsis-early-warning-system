@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VIGIL — ICU Sepsis Watch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0F1115; --panel:#171A21; --panel-2:#1D212A; --line:#262B36;
+  --ink:#E8EAED; --ink-2:#9BA3B0; --ink-3:#5C6472;
+  --green:#2F9E6B; --yellow:#D4A017; --orange:#E07A3F; --red:#C4423A;
+  --pending:#4A5568;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --serif:'Newsreader',Georgia,serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);
+     font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid #6B8AFF;outline-offset:2px}
+
+/* ---------- top bar ---------- */
+header{position:sticky;top:0;z-index:20;background:rgba(15,17,21,.92);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+  padding:14px 24px;display:flex;align-items:baseline;gap:20px;flex-wrap:wrap}
+.brand{font-family:var(--serif);font-size:24px;letter-spacing:.06em;font-weight:500}
+.brand em{font-style:italic;color:var(--ink-3);font-size:13px;letter-spacing:.02em;
+  margin-left:10px;font-family:var(--serif)}
+.clock{margin-left:auto;display:flex;gap:22px;align-items:baseline;font-size:12px;
+  color:var(--ink-2);letter-spacing:.04em}
+.clock b{font-family:var(--mono);font-variant-numeric:tabular-nums;
+  color:var(--ink);font-weight:500;font-size:15px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+  display:inline-block;margin-right:7px;vertical-align:middle}
+.dot.off{background:var(--red)}
+@media (prefers-reduced-motion:no-preference){
+  .dot{animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+}
+
+/* ---------- census strip ---------- */
+.census{display:flex;gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.census div{flex:1;background:var(--bg);padding:10px 24px}
+.census span{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:2px}
+.census b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:19px;font-weight:500}
+
+/* ---------- ward grid ---------- */
+main{padding:20px 24px 60px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  position:relative;overflow:hidden;cursor:pointer;transition:border-color .15s,background .15s}
+.card:hover{border-color:#3A4150;background:var(--panel-2)}
+.card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--tier)}
+.card.alarm{border-color:var(--tier)}
+.card-top{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 8px 19px}
+.pid{font-family:var(--mono);font-size:13px;letter-spacing:.06em;color:var(--ink-2)}
+.arch{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  margin-top:3px}
+.riskbox{margin-left:auto;text-align:right;line-height:1}
+.risk{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:32px;
+  font-weight:500;color:var(--tier);letter-spacing:-.02em}
+.risk small{font-size:15px;opacity:.55}
+.tier{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--tier);
+  margin-top:4px;font-weight:600}
+.pend{font-size:10px;letter-spacing:.08em;color:var(--pending);margin-top:3px}
+
+/* sparkline */
+.spark{padding:2px 16px 8px 19px}
+.spark svg{width:100%;height:44px;display:block}
+
+/* vitals — in-range stays quiet, out-of-range lights up. the whole point. */
+.vitals{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+  border-top:1px solid var(--line)}
+.v{background:var(--panel);padding:7px 8px 8px 10px}
+.card:hover .v{background:var(--panel-2)}
+.v span{display:block;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:1px}
+.v b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:14px;
+  font-weight:400;color:var(--ink-3)}
+.v.hot b{color:var(--ink);font-weight:500}
+.v.hot span{color:var(--ink-2)}
+
+.flags{padding:9px 16px 12px 19px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.flag{font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;
+  border:1px solid var(--line);border-radius:2px;color:var(--ink-2);background:var(--bg)}
+.flag.warn{color:var(--orange);border-color:#3E2E22}
+.quiet{font-size:11px;color:var(--ink-3);letter-spacing:.03em}
+.ack{margin-left:auto;font-family:var(--sans);font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;background:transparent;color:var(--tier);cursor:pointer;
+  border:1px solid var(--tier);border-radius:2px;padding:4px 10px}
+.ack:hover{background:var(--tier);color:var(--bg)}
+.ackd{margin-left:auto;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3)}
+
+/* warming up */
+.warm{padding:16px 16px 18px 19px}
+.warm .lbl{font-size:11px;color:var(--ink-2);letter-spacing:.03em;margin-bottom:9px}
+.bar{height:2px;background:var(--line);border-radius:1px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ink-3)}
+
+/* ---------- detail drawer ---------- */
+.scrim{position:fixed;inset:0;background:rgba(8,9,12,.72);z-index:30;display:none}
+.scrim.open{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(680px,100%);background:var(--bg);
+  border-left:1px solid var(--line);z-index:31;overflow-y:auto;
+  transform:translateX(100%);transition:transform .22s ease}
+.drawer.open{transform:none}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
+.dhead{padding:22px 26px 18px;border-bottom:1px solid var(--line);display:flex;
+  align-items:flex-start;gap:16px}
+.dhead h2{font-family:var(--serif);font-size:26px;font-weight:400;letter-spacing:.02em}
+.close{margin-left:auto;background:none;border:1px solid var(--line);color:var(--ink-2);
+  border-radius:2px;width:30px;height:30px;cursor:pointer;font-size:16px;line-height:1}
+.close:hover{border-color:var(--ink-3);color:var(--ink)}
+.dsec{padding:20px 26px;border-bottom:1px solid var(--line)}
+.dsec h3{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);
+  margin-bottom:14px}
+.traj svg{width:100%;height:150px;display:block}
+.gauges{display:grid;grid-template-columns:1fr 1fr 1fr;gap:22px}
+.g .lbl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  margin-bottom:6px}
+.g .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;
+  font-weight:500;margin-bottom:7px}
+.g .track{height:2px;background:var(--line)}
+.g .track i{display:block;height:100%}
+.g .note{font-size:10px;color:var(--ink-3);margin-top:6px;letter-spacing:.03em}
+table{width:100%;border-collapse:collapse}
+td{padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-2)}
+td:last-child{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  color:var(--ink)}
+tr:last-child td{border-bottom:none}
+.tl{display:flex;gap:11px;padding:7px 0;font-size:12px;align-items:baseline}
+.tl .h{font-family:var(--mono);color:var(--ink-3);min-width:48px;font-size:11px}
+.tl .why{color:var(--ink-3);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  margin-left:auto}
+footer{padding:16px 24px 40px;color:var(--ink-3);font-size:11px;letter-spacing:.03em;
+  border-top:1px solid var(--line);margin-top:20px}
+footer b{color:var(--ink-2);font-weight:500}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">VIGIL<em>ICU sepsis watch</em></div>
+  <div class="clock">
+    <div><span class="dot" id="dot"></span><span id="conn">connecting</span></div>
+    <div>ICU HOUR <b id="hour">—</b></div>
+  </div>
+</header>
+
+<div class="census" id="census"></div>
+
+<main><div class="grid" id="grid"></div></main>
+
+<footer>
+  <b>Research demonstration — not a medical device.</b>
+  Replay of de-identified MIMIC-IV ICU stays, one clinical hour per tick.
+  Validated on 200,000 patients across 208 hospitals (AUROC 0.852).
+  Requires 24 h of history; patients deteriorating on day one receive reduced warning.
+</footer>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Patient detail"></aside>
+
+<script>
+const TIER = {RED:'var(--red)',ORANGE:'var(--orange)',YELLOW:'var(--yellow)',
+              GREEN:'var(--green)',PENDING:'var(--pending)'};
+const RANGE = {hr:[60,100],rr:[12,20],sbp:[90,140],dbp:[60,90],o2_sat:[92,100],
+               lactate:[0,2],wbc:[4,12],creatinine:[.6,1.3],temp:[36,38]};
+const LABEL = {hr:'HR',rr:'RR',sbp:'SBP',dbp:'DBP',o2_sat:'SpO₂',lactate:'Lactate',
+               wbc:'WBC',creatinine:'Creat',temp:'Temp'};
+let LAST = {}, OPEN = null;
+
+/* never claim certainty — cap the displayed probability */
+const pct = r => Math.min(99, Math.round(r*100));
+const inRange = (k,v) => !RANGE[k] || (v>=RANGE[k][0] && v<=RANGE[k][1]);
+
+function sparkline(hist, tier){
+  const h = hist.slice(-48);
+  if(!h.filter(v=>v!=null).length) return '';
+  const W=300, H=44;
+  const bands = [[0,.25,'var(--green)'],[.25,.5,'var(--yellow)'],
+                 [.5,.75,'var(--orange)'],[.75,1,'var(--red)']]
+    .map(([a,b,c])=>`<rect x="0" y="${H-b*H}" width="${W}" height="${(b-a)*H}"
+         fill="${c}" opacity=".05"/>`).join('');
+  const step = W/Math.max(h.length-1,1);
+  let d='', started=false;
+  h.forEach((v,i)=>{
+    if(v==null){started=false;return}
+    const x=i*step, y=H-v*H;
+    d += (started?'L':'M') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+    started=true;
+  });
+  const li = h.reduce((a,v,i)=>v!=null?i:a,-1);
+  const dot = li>=0 ? `<circle cx="${(li*step).toFixed(1)}" cy="${(H-h[li]*H).toFixed(1)}"
+       r="2.5" fill="${TIER[tier]}"/>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    ${bands}<line x1="0" y1="${H*.25}" x2="${W}" y2="${H*.25}" stroke="var(--line)"
+    stroke-width="1" stroke-dasharray="2 3"/>
+    <path d="${d}" fill="none" stroke="${TIER[tier]}" stroke-width="1.6"
+    stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${dot}</svg>`;
+}
+
+function card(p){
+  const t = p.displayed_tier || 'PENDING';
+  const el = document.createElement('article');
+  el.className = 'card' + (p.active_alarm ? ' alarm' : '');
+  el.style.setProperty('--tier', TIER[t]);
+  el.tabIndex = 0;
+  el.onclick = () => openDrawer(p.patient_id);
+  el.onkeydown = e => { if(e.key==='Enter') openDrawer(p.patient_id); };
+
+  if(p.status === 'WARMING_UP'){
+    el.innerHTML = `<div class="card-top"><div>
+        <div class="pid">${p.patient_id}</div>
+        <div class="arch">new admission</div></div></div>
+      <div class="warm"><div class="lbl">Collecting baseline —
+        ${p.hours_seen} of ${p.needed} h</div>
+        <div class="bar"><i style="width:${p.hours_seen/p.needed*100}%"></i></div></div>`;
+    return el;
+  }
+
+  const v = p.latest_vitals || {};
+  const keys = ['hr','rr','sbp','o2_sat','lactate','wbc','creatinine','temp'];
+  const vitals = keys.map(k => `<div class="v ${inRange(k,v[k])?'':'hot'}">
+      <span>${LABEL[k]}</span><b>${v[k]??'—'}</b></div>`).join('');
+
+  const flags = (p.flags||[]).map(f=>`<span class="flag warn">${f}</span>`).join('')
+    || `<span class="quiet">${p.lactate_status==='ONE_READING'
+        ? 'single lactate draw — no trend' : 'no flags'}</span>`;
+
+  const action = p.active_alarm
+    ? `<button class="ack" onclick="ack(event,'${p.patient_id}')">acknowledge</button>`
+    : (p.acknowledged ? `<span class="ackd">acknowledged</span>` : '');
+
+  el.innerHTML = `
+    <div class="card-top">
+      <div><div class="pid">${p.patient_id}</div>
+           <div class="arch">${p.hours_seen} h in ICU</div></div>
+      <div class="riskbox"><div class="risk">${pct(p.lactate_adjusted_risk)}<small>%</small></div>
+        <div class="tier">${t}</div>
+        ${p.pending_tier?`<div class="pend">sustaining → ${p.pending_tier}</div>`:''}</div>
+    </div>
+    <div class="spark">${sparkline(p.risk_history||[], t)}</div>
+    <div class="vitals">${vitals}</div>
+    <div class="flags">${flags}${action}</div>`;
+  return el;
+}
+
+function render(data){
+  document.getElementById('hour').textContent = data.sim_hour;
+  const counts = {RED:0,ORANGE:0,YELLOW:0,GREEN:0,PENDING:0};
+  data.patients.forEach(p => counts[p.displayed_tier || 'PENDING']++);
+  document.getElementById('census').innerHTML =
+    ['RED','ORANGE','YELLOW','GREEN','PENDING'].map(t =>
+      `<div><span>${t==='PENDING'?'baseline':t.toLowerCase()}</span>
+       <b style="color:${counts[t]?TIER[t]:'var(--ink-3)'}">${counts[t]}</b></div>`).join('');
+
+  const g = document.getElementById('grid');
+  g.innerHTML = '';
+  data.patients.forEach(p => { LAST[p.patient_id] = p; g.appendChild(card(p)); });
+  if(OPEN) drawFor(LAST[OPEN]);
+}
+
+function trajectory(hist){
+  const h = hist.filter(v=>v!=null);
+  if(h.length<2) return '<div class="quiet">Not enough history yet.</div>';
+  const W=620,H=150,step=W/(h.length-1);
+  const bands=[[.25,'var(--yellow)'],[.5,'var(--orange)'],[.75,'var(--red)']]
+    .map(([y,c])=>`<line x1="0" y1="${H-y*H}" x2="${W}" y2="${H-y*H}" stroke="${c}"
+      stroke-width="1" opacity=".28" stroke-dasharray="3 4"/>`).join('');
+  const d = h.map((v,i)=>`${i?'L':'M'}${(i*step).toFixed(1)} ${(H-v*H).toFixed(1)}`).join(' ');
+  const area = d + `L${W} ${H} L0 ${H} Z`;
+  const last = h[h.length-1];
+  const col = last>=.75?'var(--red)':last>=.5?'var(--orange)':last>=.25?'var(--yellow)':'var(--green)';
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    ${bands}<path d="${area}" fill="${col}" opacity=".07"/>
+    <path d="${d}" fill="none" stroke="${col}" stroke-width="1.8"
+      vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`;
+}
+
+function gauge(label,val,note,col){
+  return `<div class="g"><div class="lbl">${label}</div>
+    <div class="val" style="color:${col}">${Math.round(val*100)}<span
+      style="font-size:13px;opacity:.5">%</span></div>
+    <div class="track"><i style="width:${val*100}%;background:${col}"></i></div>
+    <div class="note">${note}</div></div>`;
+}
+
+async function openDrawer(pid){
+  OPEN = pid;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+  drawFor(LAST[pid]);
+  try{
+    const r = await fetch(`/api/patients/${pid}`);
+    if(r.ok){ const full = await r.json(); LAST[pid] = {...LAST[pid], ...full}; drawFor(LAST[pid]); }
+  }catch(e){}
+}
+function closeDrawer(){
+  OPEN = null;
+  document.getElementById('scrim').classList.remove('open');
+  document.getElementById('drawer').classList.remove('open');
+}
+document.getElementById('scrim').onclick = closeDrawer;
+document.onkeydown = e => { if(e.key==='Escape') closeDrawer(); };
+
+function drawFor(p){
+  if(!p) return;
+  const t = p.displayed_tier || 'PENDING';
+  const v = p.latest_vitals || {};
+  const lac = p.lactate_status === 'ONE_READING'
+    ? 'Single draw recorded — clearance cannot be computed.'
+    : `${p.lactate_status?.toLowerCase()} · ${p.lactate_velocity>0?'+':''}${p.lactate_velocity} mmol/L/h
+       · ${p.lactate_clearance_pct}% cleared`;
+
+  const rows = Object.keys(LABEL).map(k=>`<tr><td>${LABEL[k]}</td>
+    <td style="color:${inRange(k,v[k])?'var(--ink-3)':'var(--ink)'}">${v[k]??'—'}</td></tr>`).join('');
+
+  const tl = (p.transitions||[]).slice().reverse().map(x=>`<div class="tl">
+      <span class="h">h${x.hour}</span>
+      <span style="color:${TIER[x.to]}">${x.from} → ${x.to}</span>
+      <span class="why">${x.reason}</span></div>`).join('')
+    || '<div class="quiet">No tier changes recorded.</div>';
+
+  document.getElementById('drawer').innerHTML = `
+    <div class="dhead">
+      <div><h2>${p.patient_id}</h2>
+        <div class="arch" style="color:${TIER[t]};margin-top:5px">${t} ·
+          ${pct(p.lactate_adjusted_risk)}% · ${p.hours_seen} h in ICU</div></div>
+      <button class="close" onclick="closeDrawer()" aria-label="Close">×</button>
+    </div>
+    <div class="dsec traj"><h3>Risk trajectory — full stay</h3>
+      ${trajectory(p.risk_history||[])}</div>
+    <div class="dsec"><h3>Supporting models</h3><div class="gauges">
+      ${gauge('Sepsis (TFT)',p.sepsis_risk,'calibrated',TIER[t])}
+      ${gauge('Rebound risk',p.rebound_risk,p.rebound_risk>.5?'false-dawn likely':'stable recovery','var(--ink-2)')}
+      ${gauge('Fluid responsive',p.fluid_responsive,p.fluid_responsive>.5?'fluids may help':'unlikely to respond','var(--ink-2)')}
+    </div></div>
+    <div class="dsec"><h3>Lactate</h3><div class="quiet">${lac}</div></div>
+    <div class="dsec"><h3>Latest vitals</h3><table>${rows}</table></div>
+    <div class="dsec"><h3>Alarm history</h3>${tl}</div>`;
+}
+
+async function ack(e,pid){
+  e.stopPropagation();
+  await fetch(`/api/patients/${pid}/acknowledge`,{method:'POST'});
+}
+
+/* ---------- live connection ---------- */
+function connect(){
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  const dot = document.getElementById('dot'), conn = document.getElementById('conn');
+
+  ws.onopen = () => { dot.classList.remove('off'); conn.textContent = 'live'; };
+  ws.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    if(d.type === 'restart'){ LAST={}; return; }
+    if(d.patients) render(d);
+  };
+  ws.onclose = () => {
+    dot.classList.add('off'); conn.textContent = 'reconnecting';
+    setTimeout(connect, 2000);
+  };
+  setInterval(() => { if(ws.readyState===1) ws.send('ping'); }, 25000);
+}
+fetch('/api/patients').then(r=>r.json()).then(render).catch(()=>{});
+connect();
+</script>
+</body>
+</html>
