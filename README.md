@@ -1,4 +1,4 @@
-**VIGIL: Sepsis Early-Warning System**
+<img width="2878" height="1230" alt="Screenshot 2026-08-07 133716" src="https://github.com/user-attachments/assets/9d08fc97-14a9-47c5-add2-1d08ef492415" />**VIGIL: Sepsis Early-Warning System**
 
 
 
@@ -135,6 +135,7 @@ Public demo (synthetic\_cohort.json) uses four physiology-driven synthetic patie
 
 
 replay\_cohort.json (real MIMIC-IV patients) is excluded from this repository under the PhysioNet Data Use Agreement, which prohibits public redistribution.
+
 
 
 
