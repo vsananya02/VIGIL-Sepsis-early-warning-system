@@ -22,7 +22,8 @@ Sepsis is organ failure triggered by infection. The standard bedside screen, **S
 
 ## 📊 Results (retrospective)
 
-![VIGIL vs SIRS](docs/vigil_vs_sirs_corrected.png)
+<img width="1300" height="830" alt="vigil_vs_sirs_corrected" src="https://github.com/user-attachments/assets/9243ee3b-eea7-4f6c-9fac-430d18d082b9" />
+
 
 | Measure | Result |
 |---|---|
@@ -124,7 +125,6 @@ Then open http://localhost:8000. On Windows, `run.bat` does the same.
 | `VIGIL_TICK` | `3` | Real seconds per simulated clinical hour |
 | `VIGIL_DB` | `vigil_events.db` | SQLite audit log |
 
-![Dashboard](docs/dashboard.png)
 
 ---
 
