@@ -2,163 +2,200 @@
 
 
 
-Clinical AI for high-stakes reliability. A Temporal Fusion Transformer system for early sepsis detection in ICU settings, built for interpretability and honest external validation.
+# 🩺 VIGIL: Sepsis Early-Warning Research Prototype
 
+![Python](https://img.shields.io/badge/python-3.12-blue.svg) ![PyTorch](https://img.shields.io/badge/PyTorch-TFT-ee4c2c.svg) ![FastAPI](https://img.shields.io/badge/FastAPI-WebSockets-009688.svg) ![SQLite](https://img.shields.io/badge/audit%20log-SQLite-003b57.svg) ![Status](https://img.shields.io/badge/status-research%20prototype-orange.svg) ![Not a medical device](https://img.shields.io/badge/not%20a-medical%20device-red.svg)
 
+VIGIL reads the last 24 hours of an ICU patient's vitals and labs, plus background such as age, and estimates every hour the risk that organ dysfunction will start within the next 6 hours. Alerts are rate-limited to avoid alarm fatigue, and every alert change is written to an audit log.
 
-**Overview**
+It is a **retrospective research prototype**, built to be tested honestly on data it never saw during training. It has not been used on live patients.
 
+---
 
+## 🎯 The Problem
 
-VIGIL flags high-risk sepsis patients ahead of clinical onset, giving a window for intervention on a condition where timing changes outcomes. Trained on large-scale ICU data (MIMIC-IV, eICU-CRD) and validated across 208 hospitals it never saw during training.
+Sepsis is organ failure triggered by infection. The standard bedside screen, **SIRS**, ticks 4 boxes (temperature, heart rate, breathing rate, white-cell count) and alarms at 2. It works for obvious cases but can stay silent when organs such as the kidneys worsen while the white count and vitals look normal.
 
+**Question:** can the trend of the last 24 hours flag these patients, including those with a normal white count (4 to 12), without flooding staff with false alarms?
 
+---
 
-* Sepsis kills roughly 1 in 3 patients without early intervention
-* Rare-event problem: \~3% of ICU patients develop sepsis → false alarms have to be controlled, not just sensitivity
-* Every prediction is auditable - SQLite event log, model card, explicit limitations
+## 📊 Results (retrospective)
 
+![VIGIL vs SIRS](docs/vigil_vs_sirs_corrected.png)
 
+| Measure | Result |
+|---|---|
+| External ranking (AUROC), 6-hour organ-dysfunction proxy | **0.852** (95% CI 0.8505 to 0.8538) |
+| Precision-recall (AUPRC) at assumed 3% prevalence | 0.150 (5.0x chance) |
+| Cases flagged, VIGIL vs SIRS | **83.7% vs 51.9%** |
+| Cases with normal white count (4 to 12) | **83.0% vs 35.8%** |
+| False alarms on the same 3,467 controls | 25.6% vs 34.9% |
+| Hospital-death cross-check (never trained on) | AUROC 0.726; mortality 2.3% in the lowest-risk quarter vs 19.7% in the highest |
+| Across 174 hospitals with enough deaths | median AUROC 0.725, range 0.526 to 0.880 |
+| Calibration (internal MIMIC test) | Brier 0.1225 to 0.1030; ECE 0.093 to 0.009 |
 
-**Key** **Results**
+**Other comparison scores** (same patients, hours and "2 hours in a row" rule; no mental-status or oxygen-use data was available, so these are partial versions):
 
-External Validation - 200,000 patients, 208 hospitals (eICU-CRD)
+| Score | Cases flagged | False alarms | VIGIL at the same false-alarm rate |
+|---|---|---|---|
+| SIRS (2 or more criteria) | 51.9% | 34.9% | 86.4% |
+| NEWS2, partial (5 or more) | 35.1% | 18.1% | 79.7% |
+| NEWS2, partial (7 or more) | 12.9% | 4.3% | 54.7% |
+| qSOFA, modified | 9.1% | 4.2% | 51.8% |
 
-*Metric*	                                   *Value*
+The alert test uses 11,161 proxy-defined cases and 3,467 controls drawn from the external dataset. VIGIL's threshold (0.30, two hours in a row) was fixed before testing; the matched-false-alarm thresholds were chosen afterwards.
 
-AUROC	                                   0.8521
+> **How to read this.** VIGIL was trained to forecast this exact organ-dysfunction proxy and the other scores were not, so the comparison shows how well each score anticipates the proxy, not clinical benefit. Warning time was **not** better than SIRS.
 
-Calibration (ECE)	                   0.093 → 0.009 after isotonic calibration
+---
 
-Sensitivity	                           83.7%
+## 🏗️ How It Works
 
-Specificity	                           74.4%
+```mermaid
+flowchart LR
+    A[Hourly ICU vitals + labs] --> B[Feature builder<br/>29 temporal + 11 static]
+    B --> C[Temporal Fusion Transformer<br/>24 h window]
+    C --> D[Isotonic calibration]
+    D --> E[Lactate-trend nudge]
+    E --> F[Risk tiers<br/>GREEN / YELLOW / ORANGE / RED]
+    F --> G[Alarm state machine<br/>2 h to escalate, 3 h to relax]
+    G --> H[Dashboard + SQLite audit log]
+```
 
-Median lead time	                   15h (patients with ≥24h prior ICU history)
+| Layer | Job | Status |
+|---|---|---|
+| **TFT** | Main risk score. Drives the tier and the alert. | Externally evaluated |
+| Rebound GRU | Flags "looks better, then worsens" patterns (AUROC 0.78 internal). | Exploratory, context only |
+| Lactate trend | Rule on the last two real lactate draws. Says "insufficient data" when it cannot assess. | Heuristic, context only |
+| Fluid response (XGBoost) | Experimental blood-pressure response (AUROC 0.67). | Experimental, not validated |
 
-Hour-level PPV                           \~9%
+**Inputs.** Temporal: heart rate, respiratory rate, blood pressure, SpO2, lactate, WBC, creatinine, temperature, plus derived trends and three "divergence" features (organ markers worsening while WBC falls). Static: age, gender, emergency admission, community-acquired, six comorbidity flags, baseline creatinine.
 
+**Alert rule.** Risk of 0.30 or more for 2 hours in a row, scored only after 24 hours of history (no zero-padding). The state machine turned 8 raw tier changes into 2 on the test cohort.
 
+---
 
-Lead time and sensitivity are measured only on patients with at least 24 hours of history — the model needs a full day of vitals to make its first prediction, so scoring earlier than that silently pads the input with zeros and inflates the number. That bug was caught and fixed before these figures were reported; see Data Quality Audits below.
+## 🗄️ Data
 
+| Dataset | Use | Scale |
+|---|---|---|
+| MIMIC-IV | Training and internal tests | 91,791 ICU stays, 7.2M hourly rows (62,417 train / 11,015 val / 18,359 test) |
+| eICU-CRD v2.0 | External evaluation only, never tuned on | 197,136 stays harmonised, 208 hospitals |
 
+The external runs fill only three static features (age, gender, baseline creatinine). Comorbidity and admission flags are zero in eICU.
 
-**Head-to-head vs. SIRS**
+**Label.** A three-part proxy: creatinine above 1.2, mean arterial pressure below 70, lactate above 2, with 2 or more present. It is not confirmed Sepsis-3 and its parts are also model inputs.
 
+---
 
+## 🔍 Data Quality Audits
 
-SIRS is the bedside screen hospitals actually use. Benchmarked on identical patients, identical hours, identical alarm rule (2 consecutive hours above threshold):
+Four problems were found and corrected. The lower numbers were kept.
 
-&#x09;                                                         *VIGIL	SIRS*
+| Problem | Effect | Fix |
+|---|---|---|
+| Label leakage (timestamp misalignment) | Internal AUROC 0.98 | Strict 6-hour gap, honest AUROC about 0.91 |
+| Zero-padded short histories | Lead time inflated to 24 h | Score only from hour 24; corrected median lead 15 h; 573 patients with no scorable hour excluded |
+| Missing WBC counted as "quiet" | Fake cryptic-vs-overt deficit | Re-split on measured WBC only |
+| Mismatched control groups in the SIRS false-alarm comparison | SIRS false alarms understated (26.7%) | Same 3,467 controls for both (SIRS 34.9%) |
 
-Sepsis caught (overall)	                        83.7%	51.9%
+Two further checks on the alert results: among patients with no alert at the first scorable hour, VIGIL raised a new alert for 83.3% vs 43.0% for SIRS (n=1,264, a subset); and 52% of all VIGIL alerts fired at exactly hour 24, so lead time is partly bounded by when scoring starts.
 
-Sepsis caught —                *normal WBC*	82.6%	36.9%
+---
 
-Sepsis caught —                      *overt*	85.4%	72.9%
+## 🚀 Run Locally
 
-False alarm rate	                               25.6%	26.7%
+The demo uses **four synthetic patients** (SYN-01 to SYN-04), generated from physiology rules. No real patient data is in this repository.
 
-Median lead time	                                  19h	20h
+> The trained model bundle `VIGIL_DEPLOY_v1.pt` is not in this repository yet. A hosted demo is planned.
 
+```
+pip install -r vigil_requirements.txt
+uvicorn main:app --port 8000
+```
 
+Then open http://localhost:8000. On Windows, `run.bat` does the same.
 
-Both models raise false alarms at essentially the same rate, so the detection gap isn't bought with more noise. The gap is largest on patients whose white blood cell count stays normal — SIRS requires an abnormal count to fire at all, so it's structurally blind to exactly the presentations VIGIL was built to catch.
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `VIGIL_BUNDLE` | `VIGIL_DEPLOY_v1.pt` | Model bundle (TFT, calibrator, tiers) |
+| `VIGIL_COHORT` | `synthetic_cohort.json` | Patients to replay |
+| `VIGIL_TICK` | `3` | Real seconds per simulated clinical hour |
+| `VIGIL_DB` | `vigil_events.db` | SQLite audit log |
 
+![Dashboard](docs/dashboard.png)
 
+---
 
-**Architecture**
+## 🔌 API
 
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | Dashboard |
+| `GET /api/patients` | Ward board, sorted by risk |
+| `GET /api/patients/{id}` | One patient with full risk history and alert transitions |
+| `POST /api/patients/{id}/acknowledge` | Silence an alarm until the patient worsens |
+| `GET /api/model-card` | Metrics, tiers, intended use, limitations |
+| `GET /api/audit` | Recent tier changes with hour and reason |
+| `WS /ws` | Live updates |
 
+---
 
-Model: Temporal Fusion Transformer — handles variable-length ICU stays, learns which variables matter at which point in a stay, and produces feature-level attention that's inspectable rather than a black box.
+## 📁 Repository Map
 
+| File | Role |
+|---|---|
+| `main.py` | FastAPI server, clock, WebSocket, audit log |
+| `vitals_source.py` | Releases one clinical hour per patient, keeps a 32-hour buffer |
+| `features.py` | Builds model inputs; checked against the training pipeline (max error about 5e-7) |
+| `inference.py` | Model stack, calibration, lactate tracker |
+| `alarms.py` | Alarm state machine (hysteresis, acknowledge) |
+| `dashboard.html` | Live ward board |
+| `make_synthetic_cohort.py`, `synthetic_cohort.json` | Synthetic demo patients |
+| `check_cohort.py` | Cohort sanity checks |
 
+---
 
-*Temporal features (hourly, 24h window):*  HR, RR, SBP, DBP, SpO2, lactate, WBC, creatinine, temperature
+## ⚠️ Limitations
 
-*Static features (at admission):*                  age, gender, baseline creatinine
+1. **Retrospective only.** No prospective or live-hospital testing.
+2. **Proxy label.** Not confirmed Sepsis-3; no infection check in the external set; its components are also inputs. The hospital-death check (AUROC 0.726) was added to test for circularity.
+3. **Trained on the proxy.** Comparison scores were not, so results measure proxy anticipation, not clinical benefit.
+4. **About 9 in 10 hourly alerts are false** at the operating point (hourly precision about 9%).
+5. **Needs 24 hours of history.** Patients who deteriorate on day one get reduced or no warning.
+6. **Not earlier than SIRS.** Among patients both flagged, VIGIL was earlier in only 28%.
+7. **Partial comparators.** qSOFA and NEWS2 ran without mental-status and oxygen-use data.
+8. **Observation time.** Controls were observed for a median 7 h vs 16 h for cases, so false-alarm rates are lower bounds.
+9. **Calibration.** Weakest at 0.3 to 0.4 (about 5 points optimistic); eICU scores were not recalibrated.
+10. **Research demonstration, not a medical device.** Not for clinical decisions.
 
-*Output:*                                                     risk score (0–1) every hour → triage tier
+---
 
+## 🗺️ Roadmap
 
+- Per-hospital sepsis results (currently shown for the death check)
+- Infection-aware or clinician-reviewed outcome definition
+- Complete NEWS2 and qSOFA comparators
+- Hosted public demo
+- Prospective silent evaluation (needs a clinical partner)
 
-Divergence features - engineered signal for the hardest case: organ function declining while inflammation markers stay normal. This is the pattern behind the WBC-normal result above.
+---
 
-###### 
+## 🔐 Data Access and Ethics
 
-Serving layer - FastAPI, WebSocket streaming to a live dashboard, 32h ring buffer, SQLite audit trail logging every tier change with hour and reason. A hysteresis state machine cuts alarm flapping (8 raw transitions → 2 displayed) to address the documented reason real early-warning systems get switched off: alarm fatigue.
+MIMIC-IV and eICU-CRD require PhysioNet credentialing and a data use agreement. No patient-level data from either is included here. The real-patient replay file is excluded under the PhysioNet data use terms.
 
+---
 
+## 📚 References
 
-**Data Pipeline**
+1. Johnson et al. MIMIC-IV, PhysioNet. https://mimic.mit.edu
+2. Pollard et al. eICU Collaborative Research Database. https://eicu-crd.mit.edu
+3. Lim et al. Temporal Fusion Transformers for interpretable multi-horizon time-series forecasting. *Int. J. Forecasting*, 2021.
+4. Singer et al. Third International Consensus Definitions for Sepsis (Sepsis-3). *JAMA*, 2016.
 
+**Contact:** vsananya02@gmail.com | **LinkedIn:** ( https://www.linkedin.com/in/v-s-ananya-21b32a28a/ ) | **Portfolio:** ( https://ananya-systems-and-intelligence.vsananya0205.chatgpt.site/ )
 
-
-MIMIC-IV: 91,791 ICU patients, 7.2M+ hourly records — training and internal validation
-
-eICU-CRD: 200,000+ patients, 208 hospitals — external validation only, never tuned on
-
-
-
-**Data Quality Audits**
-
-
-
-Two issues were found and corrected during development. Both are reported here rather than left in the numbers above.
-
-
-
-1\. Silent label leakage. Timestamp misalignment let the model see information from after sepsis onset during training. Traced to an hour-level leak, fixed by enforcing a strict prediction gap. AUROC dropped 0.98 → 0.91 internally — the honest number, reported instead of the inflated one.
-
-
-
-2\. Lead-time padding artifact. The model requires 24 hours of history per prediction; scoring earlier than that pads the missing hours with zeros, which the model reads as "average patient" and can fire on. This inflated measured lead time to 24h. Fixed by refusing to score any window before hour 24 and excluding patients who never reach that threshold before onset. Corrected lead time: 15h.
-
-
-
-3\. Calibration. Isotonic regression on the internal validation set. ECE improved 0.093 → 0.009 — a risk score of 50% now corresponds to roughly a 50% observed sepsis rate.
-
-
-
-**Demo**
-
-
-
-Local replay dashboard: real MIMIC-IV patient trajectories replayed one clinical hour at a time, showing the risk score climb alongside the raw vitals a clinician would actually see.
-
-
-
-Public demo (synthetic\_cohort.json) uses four physiology-driven synthetic patients — no real patient data — generated to avoid the trajectories being tuned to flatter the model. Scores are reported as produced, not adjusted after the fact. See make\_synthetic\_cohort.py.
-
-
-
-replay\_cohort.json (real MIMIC-IV patients) is excluded from this repository under the PhysioNet Data Use Agreement, which prohibits public redistribution.
-
-
-
-
-**Limitations**
-
-1. Cold start: requires 24h of ICU history; patients who deteriorate on day one receive reduced or no warning
-2. PPV \~9% at the operating threshold — most alerts are false positives, which is why the hysteresis layer exists
-3. Label is a SOFA-style proxy (creatinine, MAP, lactate thresholds), not confirmed Sepsis-3 — and three of the label's components are also model inputs. Mortality prediction (AUROC 0.726, external) is reported as an independent check against this circularity, since it shares none of the label's terms
-4. Retrospective only — no prospective clinical trial
-5. Research demonstration, not a medical device — decision-support only, not a replacement for clinical judgment
-
-
-
-**Resources**
-
-1. MIMIC-IV: https://mimic.mit.edu (requires PhysioNet credentialing)
-2. eICU-CRD: https://eicu-crd.mit.edu
-3. Temporal Fusion Transformer: Lim et al., 2021
-4. Sepsis-3 Consensus: Singer et al., JAMA 2016
-
-
-
-**Contact:** vsananya02@gmail.com
-
-**LinkedIn**:https://www.linkedin.com/in/v-s-ananya-21b32a28a/
+*VIGIL: a sepsis early-warning prototype, built to be inspected.*
 
